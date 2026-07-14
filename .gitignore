@@ -1,0 +1,27 @@
+# Secrets
+.env
+
+# Virtual environment
+venv/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Generated data (reports, PDFs, logs, caches)
+data/output/
+data/logs/
+data/career_urls_cache.json
+data/cv_profile.json
+data/processed_companies.txt
+
+# Personal input documents
+data/input/
+
+# Scratch experiments
+scratch/
+
+# Claude Code local state
+.claude/
+data/jobs.db
+data/applications.md
