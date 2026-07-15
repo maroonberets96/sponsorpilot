@@ -20,6 +20,7 @@ import pandas as pd
 
 import config
 import db
+import first_run
 from scraper import Scraper, find_matching_jobs
 from cv_analyzer import extract_text_from_docx, infer_job_titles_and_skills
 from generator import generate_tailored_cv, generate_cover_letter
@@ -448,6 +449,9 @@ def main():
     parser.add_argument("--mark-applied", type=int, metavar="JOB_ID",
                         help="Mark a job (by ID from applications.md) as applied, then exit")
     args = parser.parse_args()
+
+    if not first_run.ensure_ready():
+        return  # first-time setup, or a missing CV — guidance already printed
 
     if args.mark_applied:
         conn = db.get_conn()
