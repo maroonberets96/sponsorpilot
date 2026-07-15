@@ -8,6 +8,45 @@ review a shortlist and hit apply, not to trawl listings.
 It runs entirely on **free** API tiers and keeps all your personal data on your
 own machine.
 
+## Quick start (no coding needed)
+
+New to this and just want to use it? Follow these steps once. Budget ~20
+minutes, mostly signing up for free accounts.
+
+1. **Install Python.** Download it from [python.org/downloads](https://www.python.org/downloads/).
+   On the first install screen, tick **"Add Python to PATH"**.
+2. **Download this project.** On its GitHub page, click the green **Code**
+   button → **Download ZIP**, then unzip it somewhere like your Desktop.
+3. **Open a terminal in that folder.** On Windows, open the unzipped folder,
+   type `cmd` in the address bar, and press Enter.
+4. **Install the tool's parts.** Paste this and press Enter:
+   ```bash
+   pip install -r requirements.txt
+   ```
+5. **Get your free keys.** You need **at least one job board** and **at least
+   one AI provider**. Sign up (all free) and keep the keys handy — the setup
+   wizard will ask for them:
+   - Job board: [Adzuna](https://developer.adzuna.com) (works for UK *and*
+     Canada — the easiest single choice)
+   - AI provider: [NVIDIA NIM](https://build.nvidia.com) *or*
+     [Groq](https://console.groq.com)
+6. **Run the setup wizard.** Paste this and press Enter:
+   ```bash
+   python src/main.py
+   ```
+   The first time, it walks you through pasting your keys — just follow the
+   prompts (press Enter to skip anything you don't have).
+7. **Add your CV.** Put your CV as a Word **.docx** file into the
+   **`data/input`** folder (the wizard tells you the exact name to use).
+8. **Run it for real.** Run `python src/main.py` again. Pick a country when
+   asked, then review your shortlist in **`data/applications.md`**.
+
+On Windows, after the first setup you can just double-click **`run_daily.bat`**
+to run it each day.
+
+> The rest of this README is the detailed reference — you don't need it to get
+> started.
+
 ## How it works
 
 ```

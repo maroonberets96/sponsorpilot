@@ -15,8 +15,9 @@ data/career_urls_cache.json
 data/cv_profile.json
 data/processed_companies.txt
 
-# Personal input documents
-data/input/
+# Personal input documents (keep the folder, ignore its contents)
+data/input/*
+!data/input/.gitkeep
 
 # Scratch experiments
 scratch/
