@@ -11,7 +11,7 @@ import json
 
 import config
 from llm_client import generate_content, LLMError
-from validation import validate_document, strip_placeholder_lines
+from validation import validate_document, strip_placeholder_lines, ensure_letter_frame
 from logger import get_logger
 
 logger = get_logger()
@@ -99,7 +99,7 @@ def generate_tailored_cv(base_cv_text, job_title, job_link, job_description=None
     2. ALL section titles (e.g., Professional Profile, Core Competencies, Professional Experience, Education) MUST be formatted as Markdown Heading 2 (e.g., '## Professional Profile'). Do NOT use bold text (**) for section titles.
     3. ALL job titles/roles under Professional Experience MUST be formatted as Markdown Heading 3 (e.g., '### IT & Facilities Officer - Company'). Do NOT use bold text (**) for job titles.
     4. You MUST leave a blank empty line before starting any bulleted list so that it renders correctly as a list and not as a paragraph.
-    5. Do NOT bold the text of the bullet points in the "Core Competencies" or "Skills" section. Keep them as plain text bullet points.
+    5. Do NOT use bold (**) anywhere - not for keywords, skills or phrases inside bullets or paragraphs. Plain text throughout; headings carry the structure.
     6. ABSOLUTELY NO CONVERSATIONAL FILLER. Do not include any introductory text or concluding sentences. ONLY output the actual CV content and nothing else.
     7. Do NOT use Markdown tables (e.g., | Category |). Use standard bulleted lists instead.
     8. CRITICAL: DO NOT remove spaces between words! DO NOT combine words together (e.g., "end to end" must NOT become "endtoend"). Ensure perfect English grammar, spelling, and spacing.
@@ -134,9 +134,11 @@ def generate_cover_letter(base_cv_text, job_title, job_link, job_description=Non
     3. ABSOLUTELY NO CONVERSATIONAL FILLER. Do not include any introductory or concluding text (e.g., "Here is your Cover Letter..."). ONLY output the actual Cover Letter content and nothing else.
     4. CRITICAL: DO NOT remove spaces between words! DO NOT combine words together (e.g., "firstcontact" must be "first contact"). Ensure perfect English grammar, spelling, and spacing.
     5. Do NOT include a date line, an address block, or ANY bracketed placeholder such as [Date], [Address], [Hiring Manager] or [Company]. Omit anything you cannot fill from the Base CV - never leave a placeholder.
+    6. Open with 'Dear Hiring Manager,' on its own line, and close with 'Kind regards,' followed by my name on its own line. Do NOT use bold (**) anywhere.
     """
 
-    return _generate_validated(prompt, "cover letter", config.WRITE_TEMPERATURE)
+    letter =_generate_validated(prompt, "cover letter", config.WRITE_TEMPERATURE)
+    return ensure_letter_frame(letter)
 
 
 def generate_application_email(base_cv_text, job_title, company, job_link,

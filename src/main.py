@@ -22,6 +22,7 @@ import config
 import db
 import first_run
 import ats
+import job_folder
 from scraper import Scraper, find_matching_jobs
 from cv_analyzer import extract_text_from_docx, infer_job_titles_and_skills
 from generator import generate_tailored_cv, generate_cover_letter, generate_application_email
@@ -148,7 +149,8 @@ def _write_apply_txt(path, job, contact_email, subject, body, covered, missing,
             lines.append("  -> add these to your CV if you genuinely have them.")
         lines.append("")
     lines += [
-        "Files in this folder:  CV.pdf, CoverLetter.pdf, Email.md",
+        "Files in this folder:  CV.pdf, CoverLetter.pdf",
+        "Applied? Double-click 'Mark as applied.bat' in this folder.",
         "",
         "-" * 60,
         "APPLICATION EMAIL (ready to send)",
@@ -198,23 +200,22 @@ def build_application(cv_text, job, output_dir):
         job_dir_path = os.path.normpath(os.path.join(output_dir, job_dir_name))
         os.makedirs(job_dir_path, exist_ok=True)
 
-        with open(os.path.join(job_dir_path, "CV.md"), "w", encoding="utf-8") as f:
-            f.write(tailored_cv)
+        job_folder.write_text(os.path.join(job_dir_path, "CV.md"), tailored_cv)
         convert_markdown_to_pdf(tailored_cv, os.path.join(job_dir_path, "CV.pdf"))
-        with open(os.path.join(job_dir_path, "CoverLetter.md"), "w", encoding="utf-8") as f:
-            f.write(cover_letter)
+        job_folder.write_text(os.path.join(job_dir_path, "CoverLetter.md"), cover_letter)
         convert_markdown_to_pdf(cover_letter, os.path.join(job_dir_path, "CoverLetter.pdf"))
-        with open(os.path.join(job_dir_path, "Email.md"), "w", encoding="utf-8") as f:
-            f.write(f"**To:** {contact_email or 'not found'}\n\n"
-                    f"**Subject:** {subject}\n\n---\n\n{body}\n")
         # Machine-readable copy for the Gmail drafter (draft_emails.py).
-        with open(os.path.join(job_dir_path, "email.json"), "w", encoding="utf-8") as f:
-            json.dump({"to": contact_email or "", "subject": subject, "body": body},
-                      f, ensure_ascii=False, indent=2)
+        job_folder.write_text(
+            os.path.join(job_dir_path, "email.json"),
+            json.dumps({"to": contact_email or "", "subject": subject, "body": body},
+                       ensure_ascii=False, indent=2),
+        )
         _write_apply_txt(
             os.path.join(job_dir_path, "APPLY.txt"),
             job, contact_email, subject, body, covered, missing, contact_source,
         )
+        # Hide the tool-only files; add the double-click 'Mark as applied'
+        job_folder.finalize(job_dir_path, job.get("id"))
 
         if missing:
             logger.info(f"   ATS: {len(covered)}/{len(covered) + len(missing)} keywords covered; "
@@ -434,7 +435,7 @@ def run_jobs_mode(cv_text, profile, target_titles, country="uk"):
             "sponsor_match": row["sponsor_match"], "sponsor_name": row["sponsor_name"],
             "salary_min": row["salary_min"], "salary_max": row["salary_max"],
             "location": row["location"], "posted_date": row["posted_date"],
-            "found_date": row["found_date"], "country": country,
+            "found_date": row["found_date"], "country": country, "id": row["id"],
         }
 
     # Build the shortlist concurrently; persist each result in THIS thread as it

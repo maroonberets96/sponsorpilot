@@ -91,3 +91,33 @@ def validate_document(text, kind="document"):
         issues.append(f"{kind} may have joined-up words: {joined}")
 
     return (not hard_fail), issues
+
+
+_GREETING_RE = re.compile(r"^\s*(dear|hello|hi|to whom)\b", re.I)
+_SIGNOFF_RE = re.compile(
+    r"^\s*((kind|best|warm|warmest)\s+regards|regards|(yours\s+)?(sincerely|faithfully)"
+    r"|yours\s+(sincerely|faithfully)|thank you)\b[,.]?\s*$", re.I | re.M)
+
+
+def ensure_letter_frame(text):
+    """Make sure a cover letter opens with a greeting and closes with a
+    sign-off and the candidate's name (taken from the '# Name' header).
+    Leaves letters that already have them untouched."""
+    lines = text.strip().splitlines()
+    name = next((l[2:].strip() for l in lines if l.startswith("# ")), "")
+    # Body starts after the '# Name' line and the contact line beneath it
+    start = 0
+    if lines and lines[0].startswith("# "):
+        start = 1
+        while start < len(lines) and not lines[start].strip():
+            start += 1
+        start += 1  # skip contact line
+    body = "\n".join(lines[start:]).strip()
+    head = "\n".join(lines[:start]).strip()
+    if not _GREETING_RE.match(body):
+        body = "Dear Hiring Manager,\n\n" + body
+    if not _SIGNOFF_RE.search(body):
+        body += "\n\nKind regards,"
+        if name:
+            body += f"\n\n{name}"
+    return (head + "\n\n" + body + "\n") if head else body + "\n"
