@@ -82,17 +82,34 @@ def append_report(report_path, text):
         f.write(text)
 
 
+def _has_applications(folder):
+    """True if a run folder already holds generated job folders."""
+    for root, _dirs, files in os.walk(folder):
+        if "APPLY.txt" in files:
+            return True
+    return False
+
+
 def make_output_dir(country=None):
     """Creates data/output/<Country>/<date>/ (or the flat <date>/ layout for
-    the legacy scan mode) and seeds its report.md."""
+    the legacy scan mode) and seeds its report.md.
+
+    A second run on the same day gets its own '<date> run 2' folder (then
+    'run 3', ...) once the earlier folder holds applications, so new jobs
+    never mix with ones left over from an earlier run."""
     today = datetime.now().strftime("%Y-%m-%d")
-    title = f"Daily Job Report - {today}"
     parts = [config.OUTPUT_DIR]
+    label = ""
     if country:
         parts.append(config.COUNTRIES[country]["label"])
-        title += f" ({config.COUNTRIES[country]['label']})"
-    parts.append(today)
-    output_dir = os.path.join(*parts)
+        label = f" ({config.COUNTRIES[country]['label']})"
+    base = os.path.join(*parts)
+    run, folder = 1, today
+    while _has_applications(os.path.join(base, folder)):
+        run += 1
+        folder = f"{today} run {run}"
+    title = f"Daily Job Report - {today}{f' (run {run})' if run > 1 else ''}{label}"
+    output_dir = os.path.join(base, folder)
     os.makedirs(output_dir, exist_ok=True)
     report_path = os.path.join(output_dir, "report.md")
     if not os.path.exists(report_path):
@@ -293,9 +310,10 @@ def move_to_applied(docs_dir):
     hold applications still to send. Returns the new path, or None."""
     if not docs_dir or not os.path.isdir(docs_dir):
         return None
-    # Climb to the YYYY-MM-DD run folder; Applied/ sits next to it
+    # Climb to the 'YYYY-MM-DD' (or 'YYYY-MM-DD run N') run folder; Applied/
+    # sits next to it
     date_dir = os.path.dirname(docs_dir)
-    while not re.fullmatch(r"\d{4}-\d{2}-\d{2}", os.path.basename(date_dir)):
+    while not re.fullmatch(r"\d{4}-\d{2}-\d{2}( run \d+)?", os.path.basename(date_dir)):
         parent = os.path.dirname(date_dir)
         if parent == date_dir:
             return None  # not inside a dated folder; leave it alone
