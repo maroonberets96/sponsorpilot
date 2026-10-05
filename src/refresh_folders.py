@@ -6,6 +6,7 @@ Usage (from the project folder, while the main tool is NOT running):
 For every job folder the database knows about it:
   - adds a greeting / sign-off to the cover letter and email if missing
   - writes your phone in international format for intl_phone countries
+  - removes any invented right-to-work / visa / citizenship line from the CV
   - rebuilds CV.pdf and CoverLetter.pdf with the current PDF layout
     (from the saved .md files - no LLM calls, nothing is rewritten)
   - removes the old Email.md (the email is already in APPLY.txt)
@@ -20,7 +21,8 @@ import db
 import job_folder
 from logger import get_logger
 from pdf_generator import convert_markdown_to_pdf
-from validation import ensure_letter_frame, ensure_email_frame, international_phone
+from validation import (ensure_letter_frame, ensure_email_frame, international_phone,
+                        strip_work_status_claims)
 
 logger = get_logger()
 
@@ -54,7 +56,7 @@ def refresh(job_id, job_dir, country="uk"):
     cv_md = os.path.join(job_dir, "CV.md")
     if os.path.exists(cv_md):
         cv = _read(cv_md)
-        fixed = _fix_text(cv, phone_code)
+        fixed = _fix_text(strip_work_status_claims(cv), phone_code)
         if fixed != cv:
             job_folder.write_text(cv_md, fixed)
     cl_md = os.path.join(job_dir, "CoverLetter.md")

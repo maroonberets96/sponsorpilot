@@ -172,3 +172,33 @@ def international_phone(text, country_code):
         _NATIONAL_PHONE_RE.sub(lambda m: f"{code} {m.group(1)}", line) if "@" in line else line
         for line in text.split("\n")
     )
+
+
+# Statements about the candidate's immigration / work-authorization status.
+# A CV must never carry one: the model has no reliable source for it and has
+# invented 'settled status', 'citizen' and 'no sponsorship required' claims.
+# The accurate statement lives in .env (WORK_ELIGIBILITY_*) and goes only in
+# the application email.
+_WORK_STATUS_RE = re.compile(
+    r"right[\s-]to[\s-]work|work(ing)?\s+(rights|authori[sz]ation|permit|visa)|"
+    r"settled\s+status|pre-settled|indefinite\s+leave|\bILR\b|"
+    r"(no|without|not\s+require|not\s+requiring)\s+(visa\s+)?sponsorship|"
+    r"sponsorship\s+(is\s+)?(not\s+)?(required|needed|eligible)|"
+    r"\b(british|uk|canadian)\s+(citizen|national|passport)|citizenship|"
+    r"(graduate|skilled\s+worker|tier\s*2|working\s+holiday)\s+(route|visa)|"
+    r"visa\s+(status|holder|type)|immigration\s+status|permanent\s+resid|"
+    r"security\s+clearance",
+    re.I)
+
+
+def strip_work_status_claims(text):
+    """Remove CV lines that state a right-to-work / visa / citizenship /
+    clearance status. Only short lines (a bullet or a one-line field) are
+    dropped; a long experience paragraph that merely mentions e.g. 'visa'
+    is left alone."""
+    out = []
+    for line in (text or "").splitlines():
+        if len(line) < 220 and _WORK_STATUS_RE.search(line):
+            continue
+        out.append(line)
+    return re.sub(r"\n{3,}", "\n\n", "\n".join(out)).strip()

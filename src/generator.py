@@ -12,7 +12,7 @@ import json
 import config
 from llm_client import generate_content, LLMError
 from validation import (validate_document, strip_placeholder_lines, ensure_letter_frame,
-                        ensure_email_frame)
+                        ensure_email_frame, strip_work_status_claims)
 from logger import get_logger
 
 logger = get_logger()
@@ -87,6 +87,9 @@ def generate_tailored_cv(base_cv_text, job_title, job_link, job_description=None
     Rewrite and tailor my CV specifically for this role.
     - Highlight the skills and experiences that are most relevant to '{job_title}'.
     - Do NOT invent fake experience. Only rephrase or emphasize what is already there.
+    - NEVER state my right to work, visa, immigration, residency, citizenship or
+      security-clearance status anywhere in the CV - not even if the job asks
+      for it. Do not add a 'Right to Work' line.
     - NEVER describe me as holding the advertised job title (e.g. do not open the
       profile with "professional {job_title}"). Keep my professional identity as it
       appears in the Base CV; show fit by emphasizing relevant experience, not by
@@ -106,7 +109,10 @@ def generate_tailored_cv(base_cv_text, job_title, job_link, job_description=None
     8. CRITICAL: DO NOT remove spaces between words! DO NOT combine words together (e.g., "end to end" must NOT become "endtoend"). Ensure perfect English grammar, spelling, and spacing.
     """
 
-    return _generate_validated(prompt, "CV", config.WRITE_TEMPERATURE)
+    cv = _generate_validated(prompt, "CV", config.WRITE_TEMPERATURE)
+    # Safety net: models still invent 'settled status' / 'no sponsorship
+    # required' lines; the CV must never claim a work-authorization status.
+    return strip_work_status_claims(cv)
 
 
 def generate_cover_letter(base_cv_text, job_title, job_link, job_description=None):
@@ -124,6 +130,8 @@ def generate_cover_letter(base_cv_text, job_title, job_link, job_description=Non
     - Highlight the skills and experiences that are most relevant to '{job_title}'.
     - Keep it concise (3-4 paragraphs max).
     - Do NOT invent fake experience. Only reference what is in the base CV.
+    - NEVER state my right to work, visa, immigration, residency, citizenship or
+      security-clearance status (the application email covers this accurately).
     - NEVER claim I currently hold or have held the advertised job title, and never
       rename my past positions. Refer to my roles exactly as titled in the Base CV;
       express fit through relevant experience and skills instead.
