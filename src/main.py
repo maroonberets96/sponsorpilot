@@ -187,9 +187,12 @@ def build_application(cv_text, job, output_dir):
 
         contact_email, contact_source = find_contact(link, description, company)
         work_eligibility = config.WORK_ELIGIBILITY.get(job.get("country", "uk"), "")
+        # Name for the email sign-off, from the tailored CV's '# Name' header
+        candidate_name = next((l[2:].strip() for l in tailored_cv.splitlines()
+                               if l.startswith("# ")), "")
         subject, body = generate_application_email(
             cv_text, title, company, link, description, contact_email,
-            work_eligibility=work_eligibility,
+            work_eligibility=work_eligibility, candidate_name=candidate_name,
         )
 
         job_dir_name = safe_dir_name(company, title)

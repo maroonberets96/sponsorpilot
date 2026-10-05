@@ -121,3 +121,32 @@ def ensure_letter_frame(text):
         if name:
             body += f"\n\n{name}"
     return (head + "\n\n" + body + "\n") if head else body + "\n"
+
+
+def ensure_email_frame(body, name=""):
+    """Make sure a plain-text application email opens with a greeting and
+    ends with a sign-off followed by the candidate's name. Keeps whatever the
+    model wrote (e.g. 'Dear Tom Clark,' or a signature block) when present."""
+    lines = body.strip().splitlines()
+    if not lines:
+        return body
+    if not _GREETING_RE.match(lines[0]):
+        lines = ["Dear Hiring Manager,", ""] + lines
+    tail_start = max(0, len(lines) - 6)
+    signoff = next((i for i in range(len(lines) - 1, tail_start - 1, -1)
+                    if _SIGNOFF_RE.match(lines[i].strip())), None)
+    if signoff is None:
+        # Signature block without a sign-off: put one just above the name
+        name_at = next((i for i in range(len(lines) - 1, tail_start - 1, -1)
+                        if name and lines[i].strip() == name), None)
+        if name_at is not None:
+            lines.insert(name_at, "Kind regards,")
+        else:
+            lines += ["", "Kind regards,"] + ([name] if name else [])
+    else:
+        if not lines[signoff].rstrip().endswith(","):
+            lines[signoff] = lines[signoff].rstrip() + ","
+        after = [l.strip() for l in lines[signoff + 1:] if l.strip()]
+        if name and name not in after:
+            lines.insert(signoff + 1, name)
+    return "\n".join(lines).strip()

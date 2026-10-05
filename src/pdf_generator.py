@@ -70,6 +70,11 @@ class _Doc(FPDF):
 _LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
 _META_RE = re.compile(r"^(\*|_)(?!\*)(.+?)(?<!\*)\1$")   # whole line *italic*
 _BULLET_RE = re.compile(r"^(\s*)[*\-+•]\s+(.*)")
+# A letter's closing line; it and everything after it (name, contact) keep
+# their own lines instead of being joined into a paragraph
+_SIGNOFF_RE = re.compile(
+    r"^((kind|best|warm|warmest)\s+regards|regards|(yours\s+)?(sincerely|faithfully)"
+    r"|yours\s+(sincerely|faithfully)|many thanks|thank you)\s*,?$", re.I)
 
 
 def _inline(text):
@@ -86,7 +91,7 @@ def _inline(text):
 def _blocks(md_text):
     """Yield (kind, text) blocks; consecutive bullets are grouped as a list."""
     md_text = re.sub(r"```(?:markdown)?", "", md_text).strip()
-    blocks, para, items = [], [], []
+    blocks, para, items, closing = [], [], [], []
 
     def flush():
         if para:
@@ -99,6 +104,12 @@ def _blocks(md_text):
     for raw in md_text.splitlines():
         line = raw.rstrip()
         stripped = line.strip()
+        if closing or (_SIGNOFF_RE.match(_inline(stripped)) and not stripped.startswith("#")):
+            if stripped:
+                if not closing:
+                    flush()
+                closing.append(_inline(stripped))
+            continue
         if not stripped or re.fullmatch(r"[-*_]{3,}", stripped):
             flush()
             continue
@@ -124,6 +135,8 @@ def _blocks(md_text):
                 flush()
             para.append(stripped)
     flush()
+    if closing:
+        blocks.append(("closing", closing))
     return blocks
 
 
@@ -197,7 +210,7 @@ def convert_markdown_to_pdf(md_text, output_pdf_path):
     pdf = _Doc()
     blocks = _blocks(md_text)
     if pdf.family == "Helvetica":
-        blocks = [(k, [_clean_for_core_font(i) for i in t] if k == "list"
+        blocks = [(k, [_clean_for_core_font(i) for i in t] if k in ("list", "closing")
                    else _clean_for_core_font(t)) for k, t in blocks]
     pdf.add_page()
 
@@ -244,6 +257,12 @@ def convert_markdown_to_pdf(md_text, output_pdf_path):
                      and max(len(i) for i in text) <= TWO_COLUMN_MAX_CHARS)
             _render_list(pdf, text, short)
             pdf.ln(0.8)
+        elif kind == "closing":
+            # 'Kind regards,' then the name (and anything after) on own lines
+            pdf.font("body")
+            pdf.ln(1.0)
+            for line in text:
+                pdf.cell(0, _line_h(pdf, 1.3), line, new_x="LMARGIN", new_y="NEXT")
         else:  # paragraph
             after_name = False
             pdf.font("body")

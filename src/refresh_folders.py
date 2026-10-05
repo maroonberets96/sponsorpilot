@@ -4,20 +4,21 @@ Usage (from the project folder, while the main tool is NOT running):
     venv\\Scripts\\python.exe src\\refresh_folders.py
 
 For every job folder the database knows about it:
-  - adds a greeting / sign-off to the cover letter if the model left them out
+  - adds a greeting / sign-off to the cover letter and email if missing
   - rebuilds CV.pdf and CoverLetter.pdf with the current PDF layout
     (from the saved .md files - no LLM calls, nothing is rewritten)
   - removes the old Email.md (the email is already in APPLY.txt)
   - hides CV.md / CoverLetter.md / email.json and adds 'Mark as applied.bat'
 Safe to run more than once.
 """
+import json
 import os
 
 import db
 import job_folder
 from logger import get_logger
 from pdf_generator import convert_markdown_to_pdf
-from validation import ensure_letter_frame
+from validation import ensure_letter_frame, ensure_email_frame
 
 logger = get_logger()
 
@@ -29,6 +30,14 @@ NEW_FILES_LINE = ("Files in this folder:  CV.pdf, CoverLetter.pdf\n"
 def _read(path):
     with open(path, encoding="utf-8") as f:
         return f.read()
+
+
+def _candidate_name(job_dir):
+    """The '# Name' header of the folder's CV, for the email sign-off."""
+    cv_md = os.path.join(job_dir, "CV.md")
+    if not os.path.exists(cv_md):
+        return ""
+    return next((l[2:].strip() for l in _read(cv_md).splitlines() if l.startswith("# ")), "")
 
 
 def refresh(job_id, job_dir):
@@ -51,10 +60,24 @@ def refresh(job_id, job_dir):
     if os.path.exists(email_md):
         os.remove(email_md)
     apply_txt = os.path.join(job_dir, "APPLY.txt")
-    if os.path.exists(apply_txt):
-        text = _read(apply_txt)
-        if OLD_FILES_LINE in text:
-            job_folder.write_text(apply_txt, text.replace(OLD_FILES_LINE, NEW_FILES_LINE))
+    apply_text = _read(apply_txt) if os.path.exists(apply_txt) else None
+    if apply_text is not None:
+        apply_text = apply_text.replace(OLD_FILES_LINE, NEW_FILES_LINE)
+
+    # Email: make sure it greets and signs off (the copy in APPLY.txt too)
+    email_json = os.path.join(job_dir, "email.json")
+    if os.path.exists(email_json):
+        email = json.loads(_read(email_json))
+        name = _candidate_name(job_dir)
+        framed = ensure_email_frame(email.get("body", ""), name)
+        if framed != email.get("body"):
+            if apply_text is not None and email.get("body") and email["body"] in apply_text:
+                apply_text = apply_text.replace(email["body"], framed)
+            email["body"] = framed
+            job_folder.write_text(email_json, json.dumps(email, ensure_ascii=False, indent=2))
+
+    if apply_text is not None:
+        job_folder.write_text(apply_txt, apply_text)
     job_folder.finalize(job_dir, job_id)
     return problems
 

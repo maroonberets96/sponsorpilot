@@ -11,7 +11,8 @@ import json
 
 import config
 from llm_client import generate_content, LLMError
-from validation import validate_document, strip_placeholder_lines, ensure_letter_frame
+from validation import (validate_document, strip_placeholder_lines, ensure_letter_frame,
+                        ensure_email_frame)
 from logger import get_logger
 
 logger = get_logger()
@@ -135,6 +136,7 @@ def generate_cover_letter(base_cv_text, job_title, job_link, job_description=Non
     4. CRITICAL: DO NOT remove spaces between words! DO NOT combine words together (e.g., "firstcontact" must be "first contact"). Ensure perfect English grammar, spelling, and spacing.
     5. Do NOT include a date line, an address block, or ANY bracketed placeholder such as [Date], [Address], [Hiring Manager] or [Company]. Omit anything you cannot fill from the Base CV - never leave a placeholder.
     6. Open with 'Dear Hiring Manager,' on its own line, and close with 'Kind regards,' followed by my name on its own line. Do NOT use bold (**) anywhere.
+    7. Do NOT name third-party suppliers, vendors or service providers (e.g. my employer's IT provider) by company name - describe them generically, such as 'our managed IT service provider'.
     """
 
     letter =_generate_validated(prompt, "cover letter", config.WRITE_TEMPERATURE)
@@ -143,8 +145,11 @@ def generate_cover_letter(base_cv_text, job_title, job_link, job_description=Non
 
 def generate_application_email(base_cv_text, job_title, company, job_link,
                                job_description=None, contact_email=None,
-                               work_eligibility=None):
+                               work_eligibility=None, candidate_name=None):
     """Generate a short application email. Returns (subject, body).
+
+    The body always opens with a greeting and closes with 'Kind regards,' and
+    `candidate_name` (enforced in code, not just requested of the model).
 
     `work_eligibility`, when given, is a short authorization statement woven in
     verbatim-in-meaning (e.g. UK Skilled Worker visa, or a pending Canada PR).
@@ -152,8 +157,10 @@ def generate_application_email(base_cv_text, job_title, company, job_link,
     always produced.
     """
     greeting_hint = (
-        f"The email goes to {contact_email}." if contact_email
-        else "No named contact is known; address it 'Dear Hiring Manager,'."
+        f"The email goes to {contact_email}. Open with 'Dear Hiring Manager,' unless "
+        f"the posting clearly names the person, then use 'Dear <their name>,'."
+        if contact_email
+        else "No named contact is known; open with 'Dear Hiring Manager,'."
     )
     eligibility_rule = (
         f"- Include this work-authorization statement, kept accurate (you may "
@@ -175,7 +182,10 @@ def generate_application_email(base_cv_text, job_title, company, job_link,
     the Base CV. State that my CV and cover letter are attached.
     - Do NOT invent experience. Do NOT claim to currently hold the advertised title.
     {eligibility_rule}
-    - No bracketed placeholders. Sign off with my name from the Base CV.
+    - No bracketed placeholders. End with 'Kind regards,' and my name from the
+      Base CV on the next line.
+    - Do NOT name third-party suppliers, vendors or service providers by company
+      name; describe them generically (e.g. 'our managed IT service provider').
     - Plain text body (no markdown, no HTML).
 
     Return ONLY JSON: {{"subject": "<email subject line>", "body": "<email body>"}}
@@ -189,7 +199,7 @@ def generate_application_email(base_cv_text, job_title, company, job_link,
         subject = str(data.get("subject", "")).strip()
         body = str(data.get("body", "")).strip()
         if subject and body:
-            return subject, body
+            return subject, ensure_email_frame(body, candidate_name or "")
     except (LLMError, json.JSONDecodeError, AttributeError, TypeError) as e:
         logger.info(f"   Email generation fell back to template: {e}")
 
@@ -202,4 +212,4 @@ def generate_application_email(base_cv_text, job_title, company, job_link,
         f"I would welcome the opportunity to discuss how my experience fits this "
         f"role.{elig}\n\nKind regards"
     )
-    return subject, body
+    return subject, ensure_email_frame(body, candidate_name or "")
