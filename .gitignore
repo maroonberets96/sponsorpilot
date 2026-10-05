@@ -32,3 +32,4 @@ data/_backup_*/
 
 # Gmail OAuth client secret + token (draft_emails.py)
 data/google/
+data/api_usage.json

@@ -136,6 +136,10 @@ def _collect_values():
     reed_key = _ask("  Reed API Key (Enter to skip): ")
     print("  Jooble (Canada) — free key at https://jooble.org/api/about")
     jooble_key = _ask("  Jooble API Key (Enter to skip): ")
+    print("  Careerjet (UK + Canada) — free key at https://www.careerjet.com/partners/api")
+    careerjet_key = _ask("  Careerjet API Key (Enter to skip): ")
+    print("  JSearch (Google for Jobs) — free key at https://www.openwebninja.com/api/jsearch")
+    jsearch_key = _ask("  JSearch API Key (Enter to skip): ")
 
     print("\n-- AI provider (you need at least one) --")
     print("  NVIDIA NIM (primary) — free key at https://build.nvidia.com")
@@ -155,6 +159,8 @@ def _collect_values():
         "adzuna_key": adzuna_key,
         "reed_key": reed_key,
         "jooble_key": jooble_key,
+        "careerjet_key": careerjet_key,
+        "jsearch_key": jsearch_key,
         "nvidia_key": nvidia_key,
         "groq_key": groq_key,
         "sponsor_xlsx": sponsor_xlsx,
@@ -164,7 +170,8 @@ def _collect_values():
 
 
 def _warn_if_incomplete(values):
-    if not (values["adzuna_id"] or values["reed_key"] or values["jooble_key"]):
+    if not (values["adzuna_id"] or values["reed_key"] or values["jooble_key"]
+            or values["careerjet_key"] or values["jsearch_key"]):
         print(
             "\n  ! Heads up: you didn't add any job board keys, so no vacancies\n"
             "    will be fetched. Add at least one later in your .env file."
@@ -193,6 +200,8 @@ def _write_env(v):
         f"ADZUNA_APP_KEY={v['adzuna_key'] or 'your_adzuna_app_key'}",
         f"REED_API_KEY={v['reed_key'] or 'your_reed_api_key'}",
         f"JOOBLE_API_KEY={v['jooble_key'] or 'your_jooble_api_key'}",
+        f"CAREERJET_API_KEY={v['careerjet_key']}",
+        f"JSEARCH_API_KEY={v['jsearch_key']}",
         "",
         "# --- AI providers (waterfall: NVIDIA -> Groq -> Ollama Cloud) ---",
         f"NVIDIA_API_KEY={v['nvidia_key'] or 'your_nvidia_api_key_here'}",

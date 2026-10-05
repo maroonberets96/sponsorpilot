@@ -82,7 +82,7 @@ moves into `Applied/`, so each day's folder only holds what's still to do.
 ## How it works
 
 ```
-Job boards (Adzuna / Reed / Jooble)
+Job boards (Adzuna / Reed / Jooble / Careerjet / JSearch / Arbeitnow)
         │  live vacancies for your target roles
         ▼
 [UK only] UK sponsor-licence filter        ← keep employers that can sponsor a visa
@@ -113,8 +113,11 @@ across runs.
   with `--country`). The UK path filters employers against the official
   sponsor-licence register; the Canada path skips that (for holders of PR /
   work authorization) and searches nationwide, including remote roles.
-- **Multi-board.** Adzuna (UK + Canada), Reed (UK), and Jooble (Canada), each
-  behind a free API key. Configurable per country.
+- **Multi-board.** Adzuna (UK + Canada), Reed (UK), Jooble (Canada), Careerjet
+  (UK + Canada), JSearch (Google for Jobs: LinkedIn, Indeed, Glassdoor and more)
+  and Arbeitnow (UK, no key). All free. JSearch's 200 requests/month are spread
+  over the month automatically, rotating through your searches. A job found on
+  several boards is only processed once. Configurable per country.
 - **Resilient LLM waterfall.** Groq, Gemini, Hugging Face, NVIDIA NIM, Requesty,
   OpenRouter, Ollama Cloud, Mistral and Cerebras, all through one
   OpenAI-compatible client. Rate limits and outages fail over automatically,
@@ -154,6 +157,9 @@ across runs.
   | [Adzuna](https://developer.adzuna.com) | UK + Canada vacancies | free |
   | [Reed](https://www.reed.co.uk/developers) | UK vacancies | free |
   | [Jooble](https://jooble.org/api/about) | Canada vacancies | free |
+  | [Careerjet](https://www.careerjet.com/partners/api) | UK + Canada vacancies | free publisher key |
+  | [JSearch](https://www.openwebninja.com/api/jsearch) | Google for Jobs (LinkedIn, Indeed, Glassdoor...) | free, 200 requests/month |
+  | [Arbeitnow](https://www.arbeitnow.co.uk/api/job-board-api) | UK startup / tech vacancies | free, no key |
   | [Groq](https://console.groq.com) | LLM (fast, reliable) | free tier |
   | [Google Gemini](https://aistudio.google.com) | LLM | free tier |
   | [Hugging Face](https://huggingface.co/settings/tokens) | LLM | free tier |
@@ -282,7 +288,7 @@ src/
 ├── main.py              pipeline orchestration + CLI
 ├── config.py            all tunables and per-country settings
 ├── first_run.py         setup wizard for new users
-├── job_boards.py        Adzuna / Reed / Jooble API clients
+├── job_boards.py        Adzuna / Reed / Jooble / Careerjet / JSearch / Arbeitnow clients
 ├── sponsor_register.py  UK sponsor-licence name matching
 ├── db.py                SQLite state + dedup
 ├── matcher.py           title pre-filter + LLM scoring

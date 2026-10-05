@@ -42,7 +42,7 @@ JOB_DISTANCE_MILES = int(os.getenv("JOB_DISTANCE_MILES", "20"))
 COUNTRIES = {
     "uk": {
         "label": "UK",
-        "boards": ["adzuna", "reed"],
+        "boards": ["adzuna", "reed", "careerjet", "jsearch", "arbeitnow"],
         "adzuna_code": "gb",
         "jooble_location": JOB_LOCATION,
         "currency": "£",
@@ -53,7 +53,7 @@ COUNTRIES = {
     },
     "ca": {
         "label": "Canada",
-        "boards": ["adzuna", "jooble"],
+        "boards": ["adzuna", "jooble", "careerjet", "jsearch"],
         "adzuna_code": "ca",
         "jooble_location": "Canada",
         "currency": "C$",
@@ -74,6 +74,13 @@ RESULTS_PER_QUERY = 50         # per source, per query
 MIN_MATCH_SCORE = 7            # LLM score (1-10) required to generate documents
 MAX_DOCS_PER_RUN = 10          # highest-scored first; the rest stay shortlisted for next run
 SCORE_BATCH_SIZE = 20          # jobs scored per LLM call
+
+# JSearch (Google for Jobs) free tier: 200 requests/month. Each run uses a
+# few rotating queries per country, within this monthly budget.
+JSEARCH_QUERIES_PER_RUN = 3
+JSEARCH_MONTHLY_BUDGET = 195
+API_USAGE_PATH = os.path.join(DATA_DIR, "api_usage.json")
+ARBEITNOW_PAGES = 3            # Arbeitnow feed pages read per run (100 jobs each)
 
 # Queries sent to the job boards (drawn from the target roles)
 SEARCH_QUERIES = [
