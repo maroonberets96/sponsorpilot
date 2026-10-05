@@ -5,6 +5,7 @@ Usage (from the project folder, while the main tool is NOT running):
 
 For every job folder the database knows about it:
   - adds a greeting / sign-off to the cover letter and email if missing
+  - writes your phone in international format for intl_phone countries
   - rebuilds CV.pdf and CoverLetter.pdf with the current PDF layout
     (from the saved .md files - no LLM calls, nothing is rewritten)
   - removes the old Email.md (the email is already in APPLY.txt)
@@ -14,11 +15,12 @@ Safe to run more than once.
 import json
 import os
 
+import config
 import db
 import job_folder
 from logger import get_logger
 from pdf_generator import convert_markdown_to_pdf
-from validation import ensure_letter_frame, ensure_email_frame
+from validation import ensure_letter_frame, ensure_email_frame, international_phone
 
 logger = get_logger()
 
@@ -40,12 +42,25 @@ def _candidate_name(job_dir):
     return next((l[2:].strip() for l in _read(cv_md).splitlines() if l.startswith("# ")), "")
 
 
-def refresh(job_id, job_dir):
+def _fix_text(text, phone_code):
+    return international_phone(text, phone_code) if phone_code else text
+
+
+def refresh(job_id, job_dir, country="uk"):
     problems = []
+    cc = config.COUNTRIES.get(country, config.COUNTRIES["uk"])
+    phone_code = config.PHONE_COUNTRY_CODE if cc.get("intl_phone") else ""
+
+    cv_md = os.path.join(job_dir, "CV.md")
+    if os.path.exists(cv_md):
+        cv = _read(cv_md)
+        fixed = _fix_text(cv, phone_code)
+        if fixed != cv:
+            job_folder.write_text(cv_md, fixed)
     cl_md = os.path.join(job_dir, "CoverLetter.md")
     if os.path.exists(cl_md):
         letter = _read(cl_md)
-        framed = ensure_letter_frame(letter)
+        framed = _fix_text(ensure_letter_frame(letter), phone_code)
         if framed != letter:
             job_folder.write_text(cl_md, framed)
     for name in ("CV", "CoverLetter"):
@@ -69,7 +84,7 @@ def refresh(job_id, job_dir):
     if os.path.exists(email_json):
         email = json.loads(_read(email_json))
         name = _candidate_name(job_dir)
-        framed = ensure_email_frame(email.get("body", ""), name)
+        framed = _fix_text(ensure_email_frame(email.get("body", ""), name), phone_code)
         if framed != email.get("body"):
             if apply_text is not None and email.get("body") and email["body"] in apply_text:
                 apply_text = apply_text.replace(email["body"], framed)
@@ -85,14 +100,14 @@ def refresh(job_id, job_dir):
 def main():
     conn = db.get_conn()
     rows = conn.execute(
-        "SELECT id, title, company, docs_dir FROM jobs "
+        "SELECT id, title, company, country, docs_dir FROM jobs "
         "WHERE docs_dir IS NOT NULL AND docs_dir != ''"
     ).fetchall()
     done = 0
     for row in rows:
         if not os.path.isdir(row["docs_dir"]):
             continue
-        problems = refresh(row["id"], row["docs_dir"])
+        problems = refresh(row["id"], row["docs_dir"], row["country"] or "uk")
         done += 1
         for p in problems:
             logger.warning(f"[{row['id']}] {row['title']} - {row['company']}: {p}")

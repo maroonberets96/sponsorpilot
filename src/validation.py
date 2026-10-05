@@ -150,3 +150,25 @@ def ensure_email_frame(body, name=""):
         if name and name not in after:
             lines.insert(signoff + 1, name)
     return "\n".join(lines).strip()
+
+
+# A national-format phone number: leading 0, then 9-10 more digits, spaces or
+# dashes allowed (e.g. '07700 900123', '020 7946 0958'). Not already '+..'.
+_NATIONAL_PHONE_RE = re.compile(r"(?<![\d+])0(\d(?:[ -]?\d){8,9})(?![\d])")
+
+
+def international_phone(text, country_code):
+    """Rewrite national-format phone numbers on contact lines (the lines that
+    carry an email address) into international format, e.g. with '+44':
+    '07700 900123' -> '+44 7700 900123'. Other lines are never touched, so
+    figures elsewhere in a document can't be mistaken for a phone number.
+    No-op when country_code is empty."""
+    if not country_code:
+        return text
+    code = country_code.strip()
+    if not code.startswith("+"):
+        code = "+" + code
+    return "\n".join(
+        _NATIONAL_PHONE_RE.sub(lambda m: f"{code} {m.group(1)}", line) if "@" in line else line
+        for line in text.split("\n")
+    )

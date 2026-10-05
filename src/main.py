@@ -23,6 +23,7 @@ import db
 import first_run
 import ats
 import job_folder
+from validation import international_phone
 from scraper import Scraper, find_matching_jobs
 from cv_analyzer import extract_text_from_docx, infer_job_titles_and_skills
 from generator import generate_tailored_cv, generate_cover_letter, generate_application_email
@@ -195,8 +196,15 @@ def build_application(cv_text, job, output_dir):
             work_eligibility=work_eligibility, candidate_name=candidate_name,
         )
 
-        job_dir_name = safe_dir_name(company, title)
         cc = config.COUNTRIES.get(job.get("country", "uk"), config.COUNTRIES["uk"])
+        if cc.get("intl_phone"):
+            # Applying from abroad: phone in international format (+44 ...)
+            tailored_cv, cover_letter, body = (
+                international_phone(t, config.PHONE_COUNTRY_CODE)
+                for t in (tailored_cv, cover_letter, body)
+            )
+
+        job_dir_name = safe_dir_name(company, title)
         if cc.get("split_by_email"):
             # Forward slash so the report's markdown links still resolve
             job_dir_name = f"{'With_Email' if contact_email else 'No_Email'}/{job_dir_name}"

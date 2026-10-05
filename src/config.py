@@ -62,8 +62,13 @@ COUNTRIES = {
         "sponsor_filter": False,
         # Sort each day's application folders into With_Email / No_Email
         "split_by_email": True,
+        # Applying from abroad: write your phone in international format
+        # (adds PHONE_COUNTRY_CODE from .env, e.g. 07700... -> +44 7700...)
+        "intl_phone": True,
     },
 }
+# Your phone's country code (e.g. +44), used for countries with intl_phone
+PHONE_COUNTRY_CODE = os.getenv("PHONE_COUNTRY_CODE", "")
 MAX_JOB_AGE_DAYS = 14          # ignore postings older than this
 RESULTS_PER_QUERY = 50         # per source, per query
 MIN_MATCH_SCORE = 7            # LLM score (1-10) required to generate documents
