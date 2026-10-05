@@ -1,4 +1,5 @@
 """Matches job-board employer names against the UK sponsor-licence register."""
+import os
 import re
 
 import pandas as pd
@@ -7,6 +8,21 @@ import config
 from logger import get_logger
 
 logger = get_logger()
+
+
+def load_register_df(path=None):
+    """Load the sponsor register as a DataFrame, whichever format gov.uk
+    published it in. The 'Worker and Temporary Worker' list ships as .csv or
+    .xlsx depending on the day; pick the reader by extension and fall back to a
+    forgiving encoding for the (occasionally non-UTF8) CSV."""
+    path = path or config.COMPANIES_XLSX_PATH
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".csv":
+        try:
+            return pd.read_csv(path, dtype=str, encoding="utf-8", on_bad_lines="skip")
+        except UnicodeDecodeError:
+            return pd.read_csv(path, dtype=str, encoding="latin-1", on_bad_lines="skip")
+    return pd.read_excel(path, dtype=str)
 
 # Legal suffixes stripped for the strict match tier
 LEGAL_SUFFIXES = {"ltd", "limited", "plc", "llp", "lp", "inc", "llc", "cic"}
@@ -40,7 +56,7 @@ class SponsorRegister:
     def __init__(self, xlsx_path=None):
         path = xlsx_path or config.COMPANIES_XLSX_PATH
         logger.info(f"Loading sponsor register from {path}...")
-        df = pd.read_excel(path)
+        df = load_register_df(path)
         names = df[config.COMPANIES_XLSX_COLUMN].dropna().unique().tolist()
 
         self._strict = {}

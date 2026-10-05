@@ -28,3 +28,7 @@ scratch/
 # Local database & rolling notes
 data/jobs.db
 data/applications.md
+data/_backup_*/
+
+# Gmail OAuth client secret + token (draft_emails.py)
+data/google/

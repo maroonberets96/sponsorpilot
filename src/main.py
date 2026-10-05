@@ -11,28 +11,35 @@ directly, one batch per run.
 import os
 import re
 import json
+import shutil
 import argparse
 import subprocess
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
-
-import pandas as pd
 
 import config
 import db
 import first_run
+import ats
 from scraper import Scraper, find_matching_jobs
 from cv_analyzer import extract_text_from_docx, infer_job_titles_and_skills
-from generator import generate_tailored_cv, generate_cover_letter
+from generator import generate_tailored_cv, generate_cover_letter, generate_application_email
 from pdf_generator import convert_markdown_to_pdf
 from job_boards import fetch_all_jobs
-from contact_finder import find_contact_email
-from sponsor_register import SponsorRegister, normalize
+from contact_finder import find_contact
+from sponsor_register import SponsorRegister, normalize, load_register_df
 from matcher import title_prefilter, score_jobs
 from llm_client import LLMError
 from logger import get_logger
 
 logger = get_logger()
+
+# Each shortlisted job runs a few network-bound LLM calls plus a contact-page
+# fetch, all independent between jobs - so they build concurrently. Kept modest
+# so the free-tier providers are not all hit at once (the waterfall fails over
+# if one does rate-limit).
+GENERATE_WORKERS = 4
 
 
 # --- Shared helpers ---
@@ -92,31 +99,149 @@ def make_output_dir(country=None):
     return output_dir, report_path
 
 
-def generate_documents(cv_text, company, job_title, job_link, output_dir, job_description=None):
-    """Generates CV + cover letter (Markdown and PDF) for one job.
-    Returns the job directory name, or None on failure."""
-    try:
-        logger.info(f"   Generating tailored CV for {job_title}...")
-        tailored_cv = generate_tailored_cv(cv_text, job_title, job_link, job_description)
+def _write_apply_txt(path, job, contact_email, subject, body, covered, missing,
+                     contact_source=None):
+    """Write the per-job APPLY.txt: everything needed to apply, in one place, so
+    the report never has to be opened. `job` is a dict of posting fields."""
+    cc = config.COUNTRIES.get(job.get("country", "uk"), config.COUNTRIES["uk"])
+    lines = [
+        f"{job['title']} - {job['company']}",
+        "=" * 60,
+        "",
+    ]
+    if job.get("score") is not None:
+        lines.append(f"Score:      {job['score']}/10 ({cc['label']})")
+    if job.get("posted_date") or job.get("found_date"):
+        lines.append(f"Posted:     {job.get('posted_date') or '?'}    Found: {job.get('found_date') or '?'}")
+    if cc.get("sponsor_filter") and job.get("sponsor_match"):
+        lines.append(f"Sponsor:    {job['sponsor_match']} ({job.get('sponsor_name') or '?'})")
+    if job.get("salary_min") or job.get("salary_max"):
+        lines.append(f"Salary:     {cc['currency']}{int(job.get('salary_min') or 0):,} - "
+                     f"{cc['currency']}{int(job.get('salary_max') or 0):,}")
+    if job.get("location"):
+        lines.append(f"Location:   {job['location']}")
+    lines += [
+        "",
+        f"Job link:   {job.get('url') or '?'}",
+        f"Contact:    {contact_email or 'not found'}",
+    ]
+    site_notes = {
+        "company website": "found on the company website, not the posting -"
+                           " may be a general inbox, worth a quick check",
+        "company website - hiring person": "a named person listed near hiring/HR info on the"
+                                           " company website - check their role before sending",
+        "company website - person": "a named person on the company website, NOT clearly in"
+                                    " hiring - look them up first, may be the wrong contact",
+    }
+    if contact_email and contact_source in site_notes:
+        lines.append(f"            ({site_notes[contact_source]})")
+    lines += [
+        "",
+    ]
+    if job.get("match_reason"):
+        lines += ["Why it matches:", f"  {job['match_reason']}", ""]
+    if covered or missing:
+        total = len(covered) + len(missing)
+        lines.append(f"ATS keywords covered ({len(covered)}/{total}): {', '.join(covered) or '-'}")
+        if missing:
+            lines.append(f"ATS keywords MISSING ({len(missing)}):  {', '.join(missing)}")
+            lines.append("  -> add these to your CV if you genuinely have them.")
+        lines.append("")
+    lines += [
+        "Files in this folder:  CV.pdf, CoverLetter.pdf, Email.md",
+        "",
+        "-" * 60,
+        "APPLICATION EMAIL (ready to send)",
+        f"To:       {contact_email or '(no contact found - find one on the posting)'}",
+        f"Subject:  {subject}",
+        "",
+        body,
+        "",
+    ]
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
 
-        job_dir_name = safe_dir_name(company, job_title)
-        job_dir_path = os.path.join(output_dir, job_dir_name)
+
+def build_application(cv_text, job, output_dir):
+    """Build one application end to end (no DB writes - safe to run in a thread).
+
+    `job` is a dict with at least title, company, url; optionally description,
+    score, match_reason, sponsor_*, salary_*, location, posted_date, country.
+    Produces CV + cover letter (md + pdf), an application email, and APPLY.txt.
+    Returns a result dict, or None on failure.
+    """
+    title, company = job["title"], job["company"]
+    link = job.get("url") or ""
+    description = job.get("description")
+    try:
+        keywords = ats.extract_keywords(description, title)
+
+        logger.info(f"   Writing CV for {title} at {company}...")
+        tailored_cv = generate_tailored_cv(cv_text, title, link, description, keywords=keywords)
+        covered, missing = ats.coverage(tailored_cv, keywords)
+
+        logger.info(f"   Writing cover letter for {title}...")
+        cover_letter = generate_cover_letter(cv_text, title, link, description)
+
+        contact_email, contact_source = find_contact(link, description, company)
+        work_eligibility = config.WORK_ELIGIBILITY.get(job.get("country", "uk"), "")
+        subject, body = generate_application_email(
+            cv_text, title, company, link, description, contact_email,
+            work_eligibility=work_eligibility,
+        )
+
+        job_dir_name = safe_dir_name(company, title)
+        cc = config.COUNTRIES.get(job.get("country", "uk"), config.COUNTRIES["uk"])
+        if cc.get("split_by_email"):
+            # Forward slash so the report's markdown links still resolve
+            job_dir_name = f"{'With_Email' if contact_email else 'No_Email'}/{job_dir_name}"
+        job_dir_path = os.path.normpath(os.path.join(output_dir, job_dir_name))
         os.makedirs(job_dir_path, exist_ok=True)
 
         with open(os.path.join(job_dir_path, "CV.md"), "w", encoding="utf-8") as f:
             f.write(tailored_cv)
         convert_markdown_to_pdf(tailored_cv, os.path.join(job_dir_path, "CV.pdf"))
-
-        logger.info(f"   Generating Cover Letter for {job_title}...")
-        cover_letter = generate_cover_letter(cv_text, job_title, job_link, job_description)
-
         with open(os.path.join(job_dir_path, "CoverLetter.md"), "w", encoding="utf-8") as f:
             f.write(cover_letter)
         convert_markdown_to_pdf(cover_letter, os.path.join(job_dir_path, "CoverLetter.pdf"))
-        return job_dir_name
+        with open(os.path.join(job_dir_path, "Email.md"), "w", encoding="utf-8") as f:
+            f.write(f"**To:** {contact_email or 'not found'}\n\n"
+                    f"**Subject:** {subject}\n\n---\n\n{body}\n")
+        # Machine-readable copy for the Gmail drafter (draft_emails.py).
+        with open(os.path.join(job_dir_path, "email.json"), "w", encoding="utf-8") as f:
+            json.dump({"to": contact_email or "", "subject": subject, "body": body},
+                      f, ensure_ascii=False, indent=2)
+        _write_apply_txt(
+            os.path.join(job_dir_path, "APPLY.txt"),
+            job, contact_email, subject, body, covered, missing, contact_source,
+        )
+
+        if missing:
+            logger.info(f"   ATS: {len(covered)}/{len(covered) + len(missing)} keywords covered; "
+                        f"missing {missing}")
+        return {
+            "job_dir": job_dir_name,
+            "docs_dir": job_dir_path,
+            "contact_email": contact_email,
+            "subject": subject,
+            "covered": covered,
+            "missing": missing,
+        }
     except Exception as ex:
-        logger.error(f"   Error generating materials for {job_title}: {ex}")
+        logger.error(f"   Error building application for {title}: {ex}")
         return None
+
+
+def generate_documents(cv_text, company, job_title, job_link, output_dir, job_description=None):
+    """Legacy scan-mode wrapper: build an application from the minimal fields a
+    scraped match carries. Returns the job directory name, or None."""
+    result = build_application(
+        cv_text,
+        {"title": job_title, "company": company, "url": job_link,
+         "description": job_description, "country": "uk"},
+        output_dir,
+    )
+    return result["job_dir"] if result else None
 
 
 def send_toast(message, output_dir):
@@ -150,6 +275,30 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($xml)
         logger.error(f"Notification failed: {e}")
 
 
+def move_to_applied(docs_dir):
+    """Move a job's folder from its dated run folder into a sibling Applied/
+    folder (data/output/<Country>/Applied/<job>), so the dated folders only
+    hold applications still to send. Returns the new path, or None."""
+    if not docs_dir or not os.path.isdir(docs_dir):
+        return None
+    # Climb to the YYYY-MM-DD run folder; Applied/ sits next to it
+    date_dir = os.path.dirname(docs_dir)
+    while not re.fullmatch(r"\d{4}-\d{2}-\d{2}", os.path.basename(date_dir)):
+        parent = os.path.dirname(date_dir)
+        if parent == date_dir:
+            return None  # not inside a dated folder; leave it alone
+        date_dir = parent
+    applied_dir = os.path.join(os.path.dirname(date_dir), "Applied")
+    os.makedirs(applied_dir, exist_ok=True)
+    dest = os.path.join(applied_dir, os.path.basename(docs_dir))
+    suffix = 2
+    while os.path.exists(dest):
+        dest = os.path.join(applied_dir, f"{os.path.basename(docs_dir)}_{suffix}")
+        suffix += 1
+    shutil.move(docs_dir, dest)
+    return dest
+
+
 def write_applications_md(conn):
     """Regenerates the rolling pending-applications list from the DB."""
     rows = db.pending_applications(conn)
@@ -177,7 +326,7 @@ def write_applications_md(conn):
             f"- **Link:** {r['url']}\n"
             f"- **Contact:** {r['contact_email'] or 'not found'}\n"
             f"- **Why:** {r['match_reason']}\n"
-            f"- **Documents:** `{r['docs_dir']}`\n"
+            f"- **Apply pack:** `{os.path.join(r['docs_dir'] or '', 'APPLY.txt')}`\n"
         )
     with open(config.APPLICATIONS_MD_PATH, "w", encoding="utf-8") as f:
         f.writelines(lines)
@@ -276,32 +425,59 @@ def run_jobs_mode(cv_text, profile, target_titles, country="uk"):
             report_path,
             f"## Shortlisted vacancies - {cc['label']} ({datetime.now().strftime('%H:%M')})\n\n",
         )
-    for row in shortlisted:
-        logger.info(f" - {row['title']} at {row['company']} (score {row['match_score']}/10)")
-        job_dir = generate_documents(
-            cv_text, row["company"], row["title"], row["url"],
-            output_dir, job_description=row["description"],
-        )
-        if job_dir:
-            contact = find_contact_email(row["url"], row["description"])
+
+    def job_dict(row):
+        return {
+            "title": row["title"], "company": row["company"], "url": row["url"],
+            "description": row["description"], "score": row["match_score"],
+            "match_reason": row["match_reason"],
+            "sponsor_match": row["sponsor_match"], "sponsor_name": row["sponsor_name"],
+            "salary_min": row["salary_min"], "salary_max": row["salary_max"],
+            "location": row["location"], "posted_date": row["posted_date"],
+            "found_date": row["found_date"], "country": country,
+        }
+
+    # Build the shortlist concurrently; persist each result in THIS thread as it
+    # lands (sqlite connections are single-thread). A job that errors stays
+    # 'shortlisted' and is retried next run.
+    workers = max(1, min(GENERATE_WORKERS, len(shortlisted)))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = {
+            pool.submit(build_application, cv_text, job_dict(row), output_dir): row
+            for row in shortlisted
+        }
+        for future in as_completed(futures):
+            row = futures[future]
+            result = future.result()
+            if not result:
+                continue
             db.set_status(conn, row["id"], "generated",
-                          docs_dir=os.path.join(output_dir, job_dir),
-                          contact_email=contact)
+                          docs_dir=result["docs_dir"],
+                          contact_email=result["contact_email"])
             docs_generated += 1
+            job_dir = result["job_dir"]
             sponsor_line = (
                 f"- **Sponsor:** {row['sponsor_match']} ({row['sponsor_name']})\n"
                 if cc["sponsor_filter"] else ""
             )
+            ats_line = ""
+            if result["covered"] or result["missing"]:
+                total = len(result["covered"]) + len(result["missing"])
+                ats_line = f"- **ATS keywords:** {len(result['covered'])}/{total} covered"
+                if result["missing"]:
+                    ats_line += f" (missing: {', '.join(result['missing'])})"
+                ats_line += "\n"
             append_report(
                 report_path,
                 f"### {row['title']} - {row['company']} (score {row['match_score']}/10)\n"
                 f"- **Link:** {row['url']}\n"
                 f"{sponsor_line}"
-                f"- **Contact:** {contact or 'not found'}\n"
+                f"- **Contact:** {result['contact_email'] or 'not found'}\n"
+                f"{ats_line}"
                 f"- **Why:** {row['match_reason']}\n"
-                f"- **CV:** [CV.pdf](./{job_dir}/CV.pdf) | **Cover letter:** [CoverLetter.pdf](./{job_dir}/CoverLetter.pdf)\n\n",
+                f"- **Apply pack:** [APPLY.txt](./{job_dir}/APPLY.txt) | "
+                f"[CV.pdf](./{job_dir}/CV.pdf) | [CoverLetter.pdf](./{job_dir}/CoverLetter.pdf)\n\n",
             )
-        # on failure the job stays 'shortlisted' and is retried next run
 
     write_applications_md(conn)
     db.finish_run(conn, run_id, len(fetched), len(new_ids), docs_generated)
@@ -315,7 +491,7 @@ def run_jobs_mode(cv_text, profile, target_titles, country="uk"):
 # --- Legacy scan mode ---
 
 def get_companies_batch(batch_size):
-    df = pd.read_excel(config.COMPANIES_XLSX_PATH)
+    df = load_register_df(config.COMPANIES_XLSX_PATH)
     all_companies = df[config.COMPANIES_XLSX_COLUMN].dropna().unique().tolist()
 
     processed = set()
@@ -446,8 +622,9 @@ def main():
                         help="Country to search in jobs mode. Omit to be asked at startup.")
     parser.add_argument("--batch-size", type=int, default=config.BATCH_SIZE,
                         help=f"Companies per run in scan mode (default {config.BATCH_SIZE})")
-    parser.add_argument("--mark-applied", type=int, metavar="JOB_ID",
-                        help="Mark a job (by ID from applications.md) as applied, then exit")
+    parser.add_argument("--mark-applied", type=int, nargs="+", metavar="JOB_ID",
+                        help="Mark job(s) (by ID from applications.md) as applied, move their "
+                             "folders into Applied/, then exit")
     args = parser.parse_args()
 
     if not first_run.ensure_ready():
@@ -455,12 +632,22 @@ def main():
 
     if args.mark_applied:
         conn = db.get_conn()
-        row = db.mark_applied(conn, args.mark_applied)
-        if row:
+        for job_id in args.mark_applied:
+            row = db.mark_applied(conn, job_id)
+            if not row:
+                logger.error(f"No job with ID {job_id}.")
+                continue
             logger.info(f"Marked as applied: [{row['id']}] {row['title']} - {row['company']}")
-            write_applications_md(conn)
-        else:
-            logger.error(f"No job with ID {args.mark_applied}.")
+            try:
+                moved = move_to_applied(row["docs_dir"])
+            except OSError as e:
+                # Usually a file in the folder is open in another program
+                moved = None
+                logger.warning(f"   Could not move the folder ({e}); close any open files and retry.")
+            if moved:
+                db.set_status(conn, job_id, "applied", docs_dir=moved)
+                logger.info(f"   Folder moved to {moved}")
+        write_applications_md(conn)
         return
 
     countries = choose_countries(args.country) if args.mode == "jobs" else []

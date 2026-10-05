@@ -12,6 +12,7 @@ Each search returns normalized job dicts:
 import html
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 
 import httpx
@@ -24,6 +25,10 @@ logger = get_logger()
 load_dotenv()
 
 TIMEOUT = 30
+# Board queries are independent network calls, so they run concurrently. The
+# boards are public APIs with generous limits; a dozen in flight is well within
+# them and turns a ~minute of serial waiting into a few seconds.
+FETCH_WORKERS = 8
 
 
 def _clean(text):
@@ -197,11 +202,19 @@ def fetch_all_jobs(queries, country="uk"):
             "  Jooble (JOOBLE_API_KEY): https://jooble.org/api/about"
         )
 
+    # Every (board, query) pair is an independent call, so fan them all out at
+    # once and collect as they land. Order does not matter - the DB dedups.
+    tasks = [(name, search, query) for name, search in sources for query in queries]
     all_jobs = []
-    for name, search in sources:
-        for query in queries:
+    with ThreadPoolExecutor(max_workers=FETCH_WORKERS) as pool:
+        futures = {
+            pool.submit(search, query): (name, query)
+            for name, search, query in tasks
+        }
+        for future in as_completed(futures):
+            name, query = futures[future]
             try:
-                results = search(query)
+                results = future.result()
                 logger.info(f"{name}: '{query}' -> {len(results)} jobs")
                 all_jobs.extend(results)
             except Exception as e:

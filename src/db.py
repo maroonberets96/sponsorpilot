@@ -72,6 +72,11 @@ def _migrate(conn):
     if "contact_email" not in cols:
         conn.execute("ALTER TABLE jobs ADD COLUMN contact_email TEXT")
         conn.commit()
+    if "email_draft_id" not in cols:
+        # Gmail draft id, set once draft_emails.py has created a draft for the
+        # job - so re-running the drafter never creates duplicates.
+        conn.execute("ALTER TABLE jobs ADD COLUMN email_draft_id TEXT")
+        conn.commit()
 
 
 def dedup_key(title, company):
@@ -139,8 +144,23 @@ def pending_applications(conn):
     ).fetchall()
 
 
+def jobs_to_draft(conn):
+    """Generated jobs that have a contact email but no Gmail draft yet."""
+    return conn.execute(
+        "SELECT * FROM jobs WHERE status = 'generated' "
+        "AND contact_email IS NOT NULL AND contact_email != '' "
+        "AND (email_draft_id IS NULL OR email_draft_id = '') "
+        "ORDER BY match_score DESC"
+    ).fetchall()
+
+
+def mark_email_drafted(conn, job_id, draft_id):
+    conn.execute("UPDATE jobs SET email_draft_id = ? WHERE id = ?", (draft_id, job_id))
+    conn.commit()
+
+
 def mark_applied(conn, job_id):
-    row = conn.execute("SELECT id, title, company FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    row = conn.execute("SELECT id, title, company, docs_dir FROM jobs WHERE id = ?", (job_id,)).fetchone()
     if row:
         set_status(conn, job_id, "applied")
     return row

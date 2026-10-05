@@ -49,6 +49,7 @@ COUNTRIES = {
         "location": JOB_LOCATION,
         "distance_miles": JOB_DISTANCE_MILES,
         "sponsor_filter": True,
+        "split_by_email": True,
     },
     "ca": {
         "label": "Canada",
@@ -59,6 +60,8 @@ COUNTRIES = {
         "location": os.getenv("JOB_LOCATION_CA") or None,
         "distance_miles": JOB_DISTANCE_MILES,
         "sponsor_filter": False,
+        # Sort each day's application folders into With_Email / No_Email
+        "split_by_email": True,
     },
 }
 MAX_JOB_AGE_DAYS = 14          # ignore postings older than this
@@ -81,6 +84,17 @@ SEARCH_QUERIES = [
     "Digital Transformation",
     "Power Platform",
     "Facilities Officer",
+    "Microsoft 365 Administrator",
+    "Service Desk Analyst",
+    "Help Desk Analyst",
+    "Application Support Analyst",
+    "Junior Systems Administrator",
+    "Business Systems Analyst",
+    "Operations Analyst",
+    "Process Improvement Analyst",
+    "Systems Officer",
+    "IT Coordinator",
+    "Implementation Specialist",
 ]
 
 # Title pre-filter (mirrors the LLM matching rules, applied in code first)
@@ -102,21 +116,124 @@ MAX_DEEP_LINKS = 2              # promising sub-links to follow from a careers l
 PAGE_TEXT_LIMIT = 15000         # chars of page text sent to the LLM
 PAGE_LINKS_LIMIT = 150          # links sent to the LLM
 
-# --- LLM models (NVIDIA NIM API, OpenAI-compatible) ---
-NVIDIA_BASE_URL = "https://integrate.api.nvidia.com/v1"
-# Fast + accurate JSON extraction for job matching (sparse MoE, ~10B active params)
-MATCH_MODEL = os.getenv("NVIDIA_MATCH_MODEL", "qwen/qwen3.5-122b-a10b")
-# Qwen flagship for CV / cover letter writing (kimi-k2.6 is listed in the
-# catalog but returns 404 on invocation for standard accounts)
-WRITE_MODEL = os.getenv("NVIDIA_WRITE_MODEL", "qwen/qwen3.5-397b-a17b")
-# Shared NVIDIA fallback if the primary model errors or is rate-limited
-NVIDIA_FALLBACK_MODEL = os.getenv("NVIDIA_FALLBACK_MODEL", "deepseek-ai/deepseek-v4-flash")
-# Fallback provider 2
-GROQ_MODEL = os.getenv("GROQ_MODEL", "llama-3.3-70b-versatile")
-# Fallback provider 3: Ollama Cloud (via local daemon after `ollama signin`).
-# Model MUST end with "-cloud" - local models are never used.
-OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
-OLLAMA_CLOUD_MODEL = os.getenv("OLLAMA_CLOUD_MODEL", "gpt-oss:120b-cloud")
+# --- LLM providers (OpenAI-compatible waterfall) ---
+# Every provider below speaks the OpenAI chat-completions protocol, so one
+# client class (openai.OpenAI) drives all of them - only the base URL, key and
+# model name change. llm_client tries them in LLM_ORDER and fails over on rate
+# limits, dead keys and errors (free tiers produce these constantly, so one
+# provider alone stalls a run). Set as many keys as you have in .env; spare
+# keys for the same provider go in NVIDIA_API_KEY_2, GROQ_API_KEY_2, etc. and
+# are tried as extra fallbacks.
+#
+# gpt-oss-120b is the shared default model: it is the strongest model that
+# Groq, NVIDIA, Cerebras, Hugging Face and Ollama Cloud all serve, and it
+# handles both JSON extraction (matching) and document writing well. Each
+# provider spells it slightly differently, hence a model per provider.
+
+# Base URLs (OpenAI-compatible endpoints)
+NVIDIA_BASE_URL      = "https://integrate.api.nvidia.com/v1"
+GROQ_BASE_URL        = "https://api.groq.com/openai/v1"
+CEREBRAS_BASE_URL    = "https://api.cerebras.ai/v1"
+GEMINI_BASE_URL      = "https://generativelanguage.googleapis.com/v1beta/openai"
+HUGGINGFACE_BASE_URL = "https://router.huggingface.co/v1"
+OPENROUTER_BASE_URL  = "https://openrouter.ai/api/v1"
+MISTRAL_BASE_URL     = "https://api.mistral.ai/v1"
+REQUESTY_BASE_URL    = "https://router.requesty.ai/v1"
+# Ollama in either flavour: cloud (ollama.com/v1 + OLLAMA_API_KEY, no daemon)
+# when a key is set, otherwise the local daemon after `ollama signin`.
+OLLAMA_BASE_URL = os.getenv(
+    "OLLAMA_BASE_URL",
+    "https://ollama.com/v1" if os.getenv("OLLAMA_API_KEY") else "http://localhost:11434/v1",
+)
+
+# Model per provider (gpt-oss-120b where served; others run the nearest model
+# that provider actually offers on its free tier - verified live 2026-10-04).
+GROQ_MODEL        = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+CEREBRAS_MODEL    = os.getenv("CEREBRAS_MODEL", "gpt-oss-120b")
+HUGGINGFACE_MODEL = os.getenv("HUGGINGFACE_MODEL", "openai/gpt-oss-120b")
+# NVIDIA retired gpt-oss-120b (410 Gone); it still serves the 20b.
+NVIDIA_MODEL      = os.getenv("NVIDIA_MODEL", "openai/gpt-oss-20b")
+# Gemini cannot serve gpt-oss; it runs its own model. "-latest" on purpose:
+# Google silently zeroes the free quota on pinned older models. flash-latest
+# (not flash-LITE) is a clear quality step up with still-generous free limits;
+# set GEMINI_MODEL=gemini-pro-latest for max quality (tighter free quota).
+GEMINI_MODEL      = os.getenv("GEMINI_MODEL", "gemini-flash-latest")
+# OpenRouter rotates which models are free; gpt-oss-20b:free is gone (402).
+OPENROUTER_MODEL  = os.getenv("OPENROUTER_MODEL", "qwen/qwen3.8-27b:free")
+# Mistral: best writer available on the free key (Large is not on the free tier;
+# mistral-medium-latest is the flagship that is). Needs the free "Experiment"
+# tier activated in the Mistral console or every call 429s.
+MISTRAL_MODEL     = os.getenv("MISTRAL_MODEL", "mistral-medium-latest")
+# Requesty router: default to the fast-ish Nemotron for general fallback; the
+# 550B flagship is wired into WRITE_PREFERENCES below as a second route.
+REQUESTY_MODEL    = os.getenv("REQUESTY_MODEL", "nvidia/nemotron-3-super-120b-a12b")
+# Ollama Cloud model. Via the local daemon it must end with "-cloud"; via the
+# hosted endpoint (OLLAMA_API_KEY set) the plain "gpt-oss:120b" is used.
+OLLAMA_CLOUD_MODEL = os.getenv(
+    "OLLAMA_CLOUD_MODEL",
+    "gpt-oss:120b" if os.getenv("OLLAMA_API_KEY") else "gpt-oss:120b-cloud",
+)
+
+# Matching (job scoring, JSON extraction) is fast-first: the default waterfall
+# is fine, so the match model is just the NVIDIA default.
+MATCH_MODEL = os.getenv("NVIDIA_MATCH_MODEL", NVIDIA_MODEL)
+# Shared NVIDIA fallback if the primary NVIDIA model errors or is rate-limited.
+NVIDIA_FALLBACK_MODEL = os.getenv("NVIDIA_FALLBACK_MODEL", "nvidia/nemotron-3.5-lightning-30b-a3b")
+
+# --- Writing (CV / cover letters): quality-first, best model preferred -------
+# These are long-form documents, so unlike matching the writing path leads with
+# the STRONGEST model available and only falls back for resilience. Each entry
+# is (provider, model); tried in order, then the general waterfall as a last
+# resort. Benchmarked live 2026-10-04 on a real cover-letter prompt: the 550B
+# flagship produced the most polished, placeholder-free output. NVIDIA Nemotron
+# models run with chain-of-thought disabled (handled in llm_client) so the full
+# token budget goes to the document, not to hidden reasoning.
+WRITE_PREFERENCES = [
+    ("nvidia",   "nvidia/nemotron-3-ultra-550b-a55b"),   # 550B flagship - best prose
+    ("requesty", "nvidia/nemotron-3-ultra-550b-a55b"),   # 2nd free route to the SAME 550B
+    ("nvidia",   "nvidia/nemotron-3-super-120b-a12b"),   # 120B, ~2x faster, still strong
+    ("groq",     "openai/gpt-oss-120b"),                 # fast, strong, very reliable
+]
+# Force a single write model with NVIDIA_WRITE_MODEL (kept for back-compat); it
+# becomes the top preference when set.
+WRITE_MODEL = os.getenv("NVIDIA_WRITE_MODEL", WRITE_PREFERENCES[0][1])
+if os.getenv("NVIDIA_WRITE_MODEL"):
+    WRITE_PREFERENCES = [("nvidia", WRITE_MODEL)] + WRITE_PREFERENCES
+
+# --- Scoring (job matching): ONE model, several hosts ------------------------
+# Scores feed a hard cutoff (MIN_MATCH_SCORE) and a ranking, so every job in a
+# run must be judged by the SAME model or a "7" from one model competes with a
+# "6" from another. So scoring pins a single model - gpt-oss-120b - and only
+# varies the HOST serving it (Groq -> Hugging Face -> Ollama Cloud), giving one
+# consistent judge plus three independent quotas for resilience. The general
+# waterfall remains as a last resort if all three hosts are down (logged, rare).
+# All three names below are the identical gpt-oss-120b, just as each host spells
+# it. (NVIDIA/Cerebras are intentionally absent: NVIDIA retired the 120b and
+# Cerebras needs billing - both verified live 2026-10-04.)
+SCORE_PREFERENCES = [
+    ("groq", "openai/gpt-oss-120b"),
+    ("huggingface", "openai/gpt-oss-120b"),
+    ("ollama", OLLAMA_CLOUD_MODEL),  # "gpt-oss:120b"
+]
+
+# Order the providers are tried in, fastest + most generous free tier first
+# (verified live 2026-10-04). Cerebras is omitted from the default because its
+# key currently returns 402 (needs billing); add it back once funded, e.g.
+# LLM_ORDER=groq,cerebras,gemini,huggingface,nvidia,openrouter,ollama
+LLM_ORDER = [
+    p.strip().lower()
+    for p in os.getenv("LLM_ORDER", "").split(",") if p.strip()
+] or ["groq", "gemini", "huggingface", "nvidia", "requesty", "openrouter", "ollama", "mistral"]
+
+# --- Work authorization (woven into application emails, per country) ---------
+# A short, honest eligibility statement per country, inserted into the
+# application email so each market gets accurate messaging. Personal, so it
+# lives in .env (WORK_ELIGIBILITY_UK / WORK_ELIGIBILITY_CA), not in code.
+# Blank = do not mention work authorization for that country.
+WORK_ELIGIBILITY = {
+    "uk": os.getenv("WORK_ELIGIBILITY_UK", ""),
+    "ca": os.getenv("WORK_ELIGIBILITY_CA", ""),
+}
 
 MATCH_TEMPERATURE = 0.2         # deterministic extraction
 WRITE_TEMPERATURE = 0.5         # controlled creativity for documents
@@ -133,6 +250,16 @@ MANUAL_ROLES = [
     "Power Platform Developer / Automation Analyst",
     "IT Project Coordinator",
     "Junior Data Analyst",
+    "Microsoft 365 Administrator",
+    "Service Desk / Help Desk Analyst",
+    "Application Support Analyst",
+    "Junior Systems Administrator",
+    "Business Systems Analyst",
+    "Operations Analyst",
+    "Process Improvement Analyst",
+    "Systems Officer",
+    "IT Coordinator",
+    "Implementation Specialist",
 ]
 
 # Inferred titles containing these words are dropped unless they also contain "Data"
